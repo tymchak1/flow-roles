@@ -16,6 +16,6 @@ Flow Roles
 3 roles:
     - deposited  >1 ether for 5 years (role: *** + NFT -> gets 0.001 ether monthly)
     - deposited >3 times >1 ether (role -> gets 0.0005 ether monthly)
-    - deposit >0.3 ether monthly (role -> gets 0.0005 ether monthly)
+    - deposit > 5 ether (role -> gets 0.0005 ether monthly)
 Granting roles programmatically:
-   - Vault state changes -> Keeper -> Role Manager->checkAndGrantRole?
+   - Vault state changes -> Role Manager (Keeper) -> checkAndGrantRole?

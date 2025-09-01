@@ -2,8 +2,11 @@
 pragma solidity ^0.8.24;
 
 import {Ownable} from "@openzeppelin/openzeppelin-contracts/contracts/access/Ownable.sol";
+import {AutomationCompatibleInterface} from
+    "@smartcontractkit/chainlink-evm/contracts/src/v0.8/automation/interfaces/AutomationCompatibleInterface.sol"; // Keeper interface
+import {RoleManager} from "./RoleManager.sol";
 
-contract Vault is Ownable {
+contract Vault is RoleManager, Ownable, AutomationCompatibleInterface {
     /*//////////////////////////////////////////////////////////////
                             ERRORS
     //////////////////////////////////////////////////////////////*/
@@ -14,6 +17,7 @@ contract Vault is Ownable {
     error CantWithdrawUntilLockPeriodIsOver();
     error InvalidAmount();
     error AlreadyWitdrawn();
+    error InvalidIndex();
 
     /*//////////////////////////////////////////////////////////////
                             STATE VARIABLES
@@ -32,6 +36,7 @@ contract Vault is Ownable {
     }
 
     uint256 private totalValueLocked;
+    uint256 private constant MAX_USERS = 100;
     mapping(address => UserDeposit[]) private s_userDeposits;
 
     /*//////////////////////////////////////////////////////////////
@@ -76,11 +81,17 @@ contract Vault is Ownable {
         totalValueLocked += msg.value;
 
         s_userDeposits[msg.sender].push(newDeposit);
-
         emit Deposit(msg.sender, msg.value, newDeposit.lockUntil);
+
+        _checkAndGrantRole(msg.value, lockPeriod, s_userDeposits[msg.sender].length);
+        _updateTempRole(msg.sender);
     }
 
     function withdraw(uint256 index) external {
+        if (index >= s_userDeposits[msg.sender].length) {
+            revert InvalidIndex();
+        }
+
         UserDeposit storage dep = s_userDeposits[msg.sender][index];
         uint256 amountToSend = dep.amount;
         _updateDepositState(dep);
@@ -103,6 +114,36 @@ contract Vault is Ownable {
         require(success, TransferFailed());
 
         emit Withdraw(msg.sender, amountToSend, block.timestamp);
+        _updateTempRole(msg.sender);
+    }
+
+    function checkUpkeep(bytes calldata /*checkData*/ )
+        external
+        override
+        returns (bool upkeepNeeded, bytes memory performData)
+    {
+        address[] memory expiredUsers = new address[](MAX_USERS);
+        uint256 count = 0;
+
+        for (uint256 i = 0; i < allTempBigFanUsers.length; i++) {
+            address user = allTempBigFanUsers[i];
+            if (block.timestamp > tempRoles[user].lastActive + tempRoles[user].expiry) {
+                expiredUsers[count] = user;
+                count++;
+            }
+        }
+
+        upkeepNeeded = (count > 0);
+        performData = abi.encode(expiredUsers, count);
+    }
+
+    function performUpkeep(bytes calldata performData) external override {
+        (address[] memory expiredUsers, uint256 count) = abi.decode(performData, (address[], uint256));
+        for (uint256 i = 0; i < count; i++) {
+            address user = expiredUsers[i];
+            tempRoles[user].active = false;
+            _revokeRole(TEMP_BIG_FAN, user);
+        }
     }
 
     function _updateDepositState(UserDeposit storage dep) internal {
@@ -125,5 +166,21 @@ contract Vault is Ownable {
 
     function getDepositByIndex(address user, uint256 index) external view returns (UserDeposit memory) {
         return s_userDeposits[user][index];
+    }
+
+    function getTotalAmountUserDepostied(address user) external view returns (uint256 total) {
+        UserDeposit[] memory deposits = s_userDeposits[user];
+        for (uint256 i = 0; i < deposits.length; i++) {
+            total += deposits[i].amount;
+        }
+    }
+
+    function getTotalAmountOfActiveDeposits(address user) external view returns (uint256 total) {
+        UserDeposit[] memory deposits = s_userDeposits[user];
+        for (uint256 i = 0; i < deposits.length; i++) {
+            if (deposits[i].state == DepositState.LOCKED && deposits[i].withdrawn == false) {
+                total += deposits[i].amount;
+            }
+        }
     }
 }
