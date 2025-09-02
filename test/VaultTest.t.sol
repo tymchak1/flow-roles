@@ -4,10 +4,12 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {Vault} from "../src/Vault.sol";
 import {DeployVault} from "../script/DeployVault.s.sol";
+import {HelperConfig} from "../script/HelperConfig.s.sol";
 
 contract VaultTest is Test {
     Vault vault;
     DeployVault deployer;
+    HelperConfig helperConfig;
     address USER = makeAddr("user");
     uint256 SIX_MONTHS = 180 days;
     uint256 ONE_YEAR = 365 days;
@@ -15,12 +17,18 @@ contract VaultTest is Test {
     uint256 DEPOSIT_AMOUNT = 1 ether;
     uint256 WITHDRAW_AMOUNT = 1 ether;
 
+    address keeperRegistry;
+    uint256 checkInterval;
+
     event Deposit(address indexed user, uint256 indexed amount, uint256 indexed lockUntil);
     event Withdraw(address indexed user, uint256 indexed amount, uint256 timestamp);
 
     function setUp() external {
         deployer = new DeployVault();
-        vault = deployer.run();
+        (vault, helperConfig) = deployer.run();
+        HelperConfig.NetworkConfig memory config = helperConfig.getConfig();
+        keeperRegistry = config.keeperRegistry;
+        checkInterval = config.checkInterval;
         vm.deal(USER, 10 ether);
     }
 
@@ -30,7 +38,20 @@ contract VaultTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
-                             DEPOSIT TESTS
+                            CONSTRUCTOR TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_ConstructorSetsOwner() public view {
+        assert(vault.owner() != address(0));
+    }
+
+    function test_ConstructorSetsParametersCorrectly() public view {
+        assertEq(vault.getKeeperRegistry(), keeperRegistry);
+        assertEq(vault.getCheckInterval(), checkInterval);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            DEPOSIT TESTS
     //////////////////////////////////////////////////////////////*/
 
     function test_RevertIf_DepositAmountIsZero() public {
@@ -514,6 +535,26 @@ contract VaultTest is Test {
         assertEq(vault.getTotalValueLocked(), 0);
     }
 
+    /*//////////////////////////////////////////////////////////////
+                            EDGE CASES TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_UsersCanDeposit() public {
+        for (uint256 i = 0; i < 100; i++) {
+            address user = makeAddr(string(abi.encodePacked("user", vm.toString(i))));
+            vm.deal(user, 10 ether);
+            vm.prank(user);
+            vault.deposit{value: 1 ether}(SIX_MONTHS);
+        }
+
+        address user101 = makeAddr("user101");
+        vm.deal(user101, 10 ether);
+        vm.prank(user101);
+        vault.deposit{value: 1 ether}(SIX_MONTHS);
+
+        assertEq(vault.getTotalValueLocked(), 101 ether);
+        assertEq(vault.getUserDeposits(user101).length, 1);
+    }
     /*//////////////////////////////////////////////////////////////
                               GETTER TESTS
     //////////////////////////////////////////////////////////////*/
