@@ -230,6 +230,28 @@ contract VaultTest is Test {
         assertEq(deposit.amount, 1 wei);
     }
 
+    function testFuzz_Deposit(uint256 amount) public {
+        amount = bound(amount, 0.0001 ether, 100 ether);
+
+        vault.deposit{value: amount}(SIX_MONTHS);
+
+        uint256 userDeposited = vault.getTotalAmountUserDepostied(address(this));
+        uint256 totalValueLocked = vault.getTotalValueLocked();
+        assertEq(userDeposited, amount);
+        assertEq(totalValueLocked, amount);
+    }
+
+    function testFuzz_DepositWithInvalidLockPeriod(uint256 lockPeriod, uint256 amount) public {
+        amount = bound(amount, 0.0001 ether, 10 ether);
+
+        vm.assume(lockPeriod != SIX_MONTHS && lockPeriod != ONE_YEAR && lockPeriod != FIVE_YEARS);
+
+        vm.deal(address(this), amount);
+
+        vm.expectRevert(Vault.InvalidLockPeriod.selector);
+        vault.deposit{value: amount}(lockPeriod);
+    }
+
     /*//////////////////////////////////////////////////////////////
                              WITHDRAW TESTS
     //////////////////////////////////////////////////////////////*/
@@ -533,6 +555,50 @@ contract VaultTest is Test {
 
         assertEq(USER.balance, userBalanceBefore);
         assertEq(vault.getTotalValueLocked(), 0);
+    }
+
+    function testFuzz_WithdrawWithInvalidIndex(uint256 index) public {
+        vault.deposit{value: DEPOSIT_AMOUNT}(SIX_MONTHS);
+
+        vm.warp(block.timestamp + SIX_MONTHS + 1);
+
+        vm.assume(index != 0);
+        vm.expectRevert(Vault.InvalidIndex.selector);
+        vault.withdraw(index);
+    }
+
+    function testFuzz_WithdrawBeforeLockPeriod(uint256 timeLocked) public {
+        vault.deposit{value: DEPOSIT_AMOUNT}(SIX_MONTHS);
+
+        timeLocked = bound(timeLocked, 0, SIX_MONTHS - 1);
+        vm.warp(block.timestamp + timeLocked);
+
+        vm.expectRevert(Vault.CantWithdrawUntilLockPeriodIsOver.selector);
+        vault.withdraw(0);
+    }
+
+    function testFuzz_WithdrawSuccesfull(uint256 depositAmount) public {
+        depositAmount = bound(depositAmount, 0.0001 ether, 10 ether);
+
+        vm.prank(USER);
+        vault.deposit{value: depositAmount}(SIX_MONTHS);
+
+        vm.warp(block.timestamp + SIX_MONTHS + 1);
+
+        uint256 userBalanceBefore = address(USER).balance;
+
+        vm.prank(USER);
+        vault.withdraw(0);
+
+        assertEq(address(USER).balance, userBalanceBefore + depositAmount);
+        assertEq(vault.getTotalValueLocked(), 0);
+
+        Vault.UserDeposit memory deposit = vault.getDepositByIndex(address(USER), 0);
+        assertEq(deposit.amount, 0);
+        assertEq(deposit.timestamp, 0);
+        assertEq(deposit.lockUntil, 0);
+        assertEq(uint256(deposit.state), uint256(Vault.DepositState.UNLOCKED));
+        assertTrue(deposit.withdrawn);
     }
 
     /*//////////////////////////////////////////////////////////////
