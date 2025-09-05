@@ -37,6 +37,10 @@ contract VaultTest is Test {
         assertEq(vault.getUserDeposits(address(this)).length, 0);
     }
 
+    function test_ValidKeeperRegistry() public view {
+        assert(vault.getKeeperRegistry() != address(0));
+    }
+
     /*//////////////////////////////////////////////////////////////
                             CONSTRUCTOR TESTS
     //////////////////////////////////////////////////////////////*/
@@ -289,7 +293,6 @@ contract VaultTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
-
                              WITHDRAW TESTS
     //////////////////////////////////////////////////////////////*/
 

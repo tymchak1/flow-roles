@@ -48,7 +48,8 @@ contract HelperConfig is Script {
             return localNetworkConfig;
         }
         vm.startBroadcast();
-        localNetworkConfig = NetworkConfig({keeperRegistry: address(0), checkInterval: INTERVAL});
+        localNetworkConfig =
+            NetworkConfig({keeperRegistry: address(makeAddr("keeperRegistry")), checkInterval: INTERVAL});
         vm.stopBroadcast();
         return localNetworkConfig;
     }

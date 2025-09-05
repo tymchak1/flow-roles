@@ -30,6 +30,8 @@ contract Vault is RoleManager, Ownable, AutomationCompatibleInterface {
     error AlreadyWitdrawn();
     /// @notice Thrown if a deposit index is invalid.
     error InvalidIndex();
+    /// @notice Thrown if an address is the zero address.
+    error InvalidAddress();
 
     /*//////////////////////////////////////////////////////////////
                             STATE VARIABLES
@@ -60,11 +62,10 @@ contract Vault is RoleManager, Ownable, AutomationCompatibleInterface {
         DepositState state;
         bool withdrawn;
     }
-    /// @notice Address of the Chainlink Keeper Registry contract.
 
-    address private s_keeperRegistry;
+    address private immutable s_keeperRegistry;
     /// @notice Interval (in seconds) at which keepers should check for expired roles.
-    uint256 private s_checkInterval;
+    uint256 private immutable s_checkInterval;
     /// @notice Total value locked in the contract across all users.
     uint256 private totalValueLocked;
     /// @notice Maximum number of users for batch operations (in checkUpkeep).
@@ -97,7 +98,7 @@ contract Vault is RoleManager, Ownable, AutomationCompatibleInterface {
      * @param keeperRegistry Address of the Chainlink Keeper Registry.
      * @param checkInterval Interval in seconds for keeper checks.
      */
-    constructor(address keeperRegistry, uint256 checkInterval) Ownable(msg.sender) {
+    constructor(address keeperRegistry, uint256 checkInterval) Ownable(msg.sender) notZeroAddress(keeperRegistry) {
         s_keeperRegistry = keeperRegistry;
         s_checkInterval = checkInterval;
     }
@@ -116,7 +117,14 @@ contract Vault is RoleManager, Ownable, AutomationCompatibleInterface {
      * @param amount The amount to check.
      */
     modifier moreThanZero(uint256 amount) {
-        require(amount > 0, AmountMustBeMoreThatZero());
+        if (amount <= 0) {
+            revert AmountMustBeMoreThatZero();
+        }
+        _;
+    }
+
+    modifier notZeroAddress(address addr) {
+        if (addr == address(0)) revert InvalidAddress();
         _;
     }
 
@@ -151,10 +159,11 @@ contract Vault is RoleManager, Ownable, AutomationCompatibleInterface {
         totalValueLocked += msg.value;
 
         s_userDeposits[msg.sender].push(newDeposit);
-        emit Deposit(msg.sender, msg.value, newDeposit.lockUntil);
 
         _checkAndGrantRole(msg.value, lockPeriod, s_userDeposits[msg.sender].length);
         _updateTempRole(msg.sender);
+
+        emit Deposit(msg.sender, msg.value, newDeposit.lockUntil);
     }
 
     /**
@@ -184,11 +193,14 @@ contract Vault is RoleManager, Ownable, AutomationCompatibleInterface {
         dep.withdrawn = true;
         totalValueLocked -= amountToSend;
 
-        (bool success,) = msg.sender.call{value: amountToSend}("");
-        require(success, TransferFailed());
+        _updateTempRole(msg.sender);
 
         emit Withdraw(msg.sender, amountToSend, block.timestamp);
-        _updateTempRole(msg.sender);
+
+        (bool success,) = msg.sender.call{value: amountToSend}("");
+        if (!success) {
+            revert TransferFailed();
+        }
     }
 
     /**
@@ -207,6 +219,8 @@ contract Vault is RoleManager, Ownable, AutomationCompatibleInterface {
         uint256 count = 0;
 
         for (uint256 i = 0; i < allTempBigFanUsers.length; i++) {
+            // Note: Using block.timestamp is acceptable here, as ±15s drift does
+            // not impact role expiry logic.
             address user = allTempBigFanUsers[i];
             if (block.timestamp > tempRoles[user].lastActive + tempRoles[user].expiry) {
                 expiredUsers[count] = user;
@@ -215,6 +229,7 @@ contract Vault is RoleManager, Ownable, AutomationCompatibleInterface {
         }
 
         upkeepNeeded = (count > 0);
+
         performData = abi.encode(expiredUsers, count);
     }
 

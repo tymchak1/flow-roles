@@ -24,8 +24,6 @@ contract RoleManager is AccessControl {
 
     /// @notice Mapping from user address to their temporary role
     mapping(address => TimedRole) public tempRoles;
-
-    /// @notice List of all users who have the TEMP_BIG_FAN role
     address[] public allTempBigFanUsers;
 
     /// @notice Permanent role identifiers
@@ -81,6 +79,7 @@ contract RoleManager is AccessControl {
         if (hasRole(TEMP_BIG_FAN, user) && tempRoles[user].active) {
             tempRoles[user].lastActive = block.timestamp;
             tempRoles[user].expiry = block.timestamp + TEMP_ROLE_EXPIRY;
+            allTempBigFanUsers.push(user);
         }
     }
 }
