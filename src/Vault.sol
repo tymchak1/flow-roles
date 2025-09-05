@@ -62,6 +62,7 @@ contract Vault is RoleManager, Ownable, AutomationCompatibleInterface {
         DepositState state;
         bool withdrawn;
     }
+    /// @notice Address of the Chainlink Keeper Registry.
 
     address private immutable s_keeperRegistry;
     /// @notice Interval (in seconds) at which keepers should check for expired roles.
