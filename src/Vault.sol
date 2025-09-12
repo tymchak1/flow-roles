@@ -34,7 +34,7 @@ contract Vault is RoleManager, Ownable, AutomationCompatibleInterface {
     error InvalidAddress();
 
     /*//////////////////////////////////////////////////////////////
-                            STATE VARIABLES
+                            TYPE DECLARATIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
@@ -62,8 +62,14 @@ contract Vault is RoleManager, Ownable, AutomationCompatibleInterface {
         DepositState state;
         bool withdrawn;
     }
-    /// @notice Address of the Chainlink Keeper Registry.
 
+    mapping(address => UserDeposit[]) private s_userDeposits;
+
+    /*//////////////////////////////////////////////////////////////
+                            STATE VARIABLES
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Address of the Chainlink Keeper Registry.
     address private immutable s_keeperRegistry;
     /// @notice Interval (in seconds) at which keepers should check for expired roles.
     uint256 private immutable s_checkInterval;
@@ -72,7 +78,6 @@ contract Vault is RoleManager, Ownable, AutomationCompatibleInterface {
     /// @notice Maximum number of users for batch operations (in checkUpkeep).
     uint256 private constant MAX_USERS = 100;
     /// @notice Mapping from user address to array of their deposits.
-    mapping(address => UserDeposit[]) private s_userDeposits;
 
     /*//////////////////////////////////////////////////////////////
                                 EVENTS
@@ -329,5 +334,9 @@ contract Vault is RoleManager, Ownable, AutomationCompatibleInterface {
      */
     function getCheckInterval() external view returns (uint256) {
         return s_checkInterval;
+    }
+
+    function getMaxUsers() external pure returns (uint256) {
+        return MAX_USERS;
     }
 }

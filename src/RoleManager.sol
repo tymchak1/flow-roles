@@ -59,11 +59,13 @@ contract RoleManager is AccessControl {
     function _checkAndGrantRole(uint256 amount, uint256 lockPeriod, uint256 timesDeposited) internal {
         if (amount >= 1 ether && lockPeriod == FIVE_YEARS) {
             _grantRole(LONG_TERM_WHALE, msg.sender);
-        } else if (amount >= 1 ether && timesDeposited >= 3) {
+        }
+        if (amount >= 1 ether && timesDeposited >= 3) {
             _grantRole(FREQUENT_WHALE, msg.sender);
         } else if (amount >= 5 ether) {
             _grantRole(BIG_DEPOSITOR, msg.sender);
-        } else if (amount > 0.001 ether) {
+        }
+        if (amount > 0.001 ether) {
             _grantRole(TEMP_BIG_FAN, msg.sender);
             tempRoles[msg.sender] =
                 TimedRole({active: true, lastActive: block.timestamp, expiry: block.timestamp + TEMP_ROLE_EXPIRY});

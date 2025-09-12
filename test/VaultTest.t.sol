@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, console} from "forge-std/Test.sol";
 import {Vault} from "../src/Vault.sol";
 import {DeployVault} from "../script/DeployVault.s.sol";
 import {HelperConfig} from "../script/HelperConfig.s.sol";
+import {RoleManager} from "../src/RoleManager.sol";
 
 contract VaultTest is Test {
     Vault vault;
     DeployVault deployer;
     HelperConfig helperConfig;
+    RoleManager roleManager;
     address USER = makeAddr("user");
     uint256 SIX_MONTHS = 180 days;
     uint256 ONE_YEAR = 365 days;
@@ -26,10 +28,11 @@ contract VaultTest is Test {
     function setUp() external {
         deployer = new DeployVault();
         (vault, helperConfig) = deployer.run();
+        roleManager = new RoleManager();
         HelperConfig.NetworkConfig memory config = helperConfig.getConfig();
         keeperRegistry = config.keeperRegistry;
         checkInterval = config.checkInterval;
-        vm.deal(USER, 10 ether);
+        vm.deal(USER, 100 ether);
     }
 
     function test_InitialState() public view {
@@ -52,6 +55,43 @@ contract VaultTest is Test {
     function test_ConstructorSetsParametersCorrectly() public view {
         assertEq(vault.getKeeperRegistry(), keeperRegistry);
         assertEq(vault.getCheckInterval(), checkInterval);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        TOTAL VALUE LOCKED TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_TotalValueLockedIncrease(uint256 amount) public {
+        amount = bound(amount, 0.0001 ether, 49 ether);
+
+        vm.prank(USER);
+        vault.deposit{value: amount}(SIX_MONTHS);
+
+        uint256 totalValueLockedFirst = vault.getTotalValueLocked();
+        assertEq(totalValueLockedFirst, amount);
+
+        vm.prank(USER);
+        vault.deposit{value: amount}(SIX_MONTHS);
+
+        uint256 totalValueLockedAfter = vault.getTotalValueLocked();
+        assertEq(totalValueLockedAfter, totalValueLockedFirst + amount);
+    }
+
+    function test_TotalValueLockedDecreaseAfterWithdraw(uint256 amount) public {
+        amount = bound(amount, 0.0001 ether, 49 ether);
+
+        vm.prank(USER);
+        vault.deposit{value: amount}(SIX_MONTHS);
+
+        uint256 totalValueLockedFirst = vault.getTotalValueLocked();
+        assertEq(totalValueLockedFirst, amount);
+
+        vm.warp(SIX_MONTHS + 1);
+        vm.prank(USER);
+        vault.withdraw(0);
+
+        uint256 totalValueLockedAfter = vault.getTotalValueLocked();
+        assertEq(totalValueLockedAfter, totalValueLockedFirst - amount);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -188,7 +228,7 @@ contract VaultTest is Test {
         assertEq(vault.getTotalValueLocked(), DEPOSIT_AMOUNT * 6);
     }
 
-    function test_DepositFromMultipleUsers() public {
+    function test_Deposit_FromMultipleUsers() public {
         address user1 = makeAddr("user1");
         address user2 = makeAddr("user2");
         address user3 = makeAddr("user3");
@@ -220,7 +260,7 @@ contract VaultTest is Test {
         assertEq(vault.getUserDeposits(user3).length, 1);
     }
 
-    function test_DepositWithMinimumAmount() public {
+    function test_Deposit_WithMinimumAmount() public {
         vm.prank(USER);
 
         vm.expectEmit(true, true, false, true);
@@ -245,7 +285,7 @@ contract VaultTest is Test {
         assertEq(totalValueLocked, amount);
     }
 
-    function testFuzz_DepositWithInvalidLockPeriod(uint256 lockPeriod, uint256 amount) public {
+    function testFuzz_Deposit_WithInvalidLockPeriod(uint256 lockPeriod, uint256 amount) public {
         amount = bound(amount, 0.0001 ether, 10 ether);
 
         vm.assume(lockPeriod != SIX_MONTHS && lockPeriod != ONE_YEAR && lockPeriod != FIVE_YEARS);
@@ -257,20 +297,18 @@ contract VaultTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
-                             WITHDRAW TESTS
+                            GRANT ROLE TESTS
     //////////////////////////////////////////////////////////////*/
 
-    function testGrantLongTermWhaleRole() public {
-        uint256 fiveYears = 5 * 365 days;
-
+    function test_Grant_LongTermWhaleRole() public {
         vm.startPrank(USER);
-        vault.deposit{value: 1 ether}(fiveYears);
+        vault.deposit{value: 1 ether}(FIVE_YEARS);
         vm.stopPrank();
 
         assertTrue(vault.hasRole(vault.LONG_TERM_WHALE(), USER));
     }
 
-    function testGrantFrequentWhaleRole() public {
+    function test_Grant_FrequentWhaleRole() public {
         uint256 oneYear = 365 days;
 
         vm.startPrank(USER);
@@ -282,14 +320,49 @@ contract VaultTest is Test {
         assertTrue(vault.hasRole(vault.FREQUENT_WHALE(), USER));
     }
 
-    function testGrantBigDepositorRole() public {
-        uint256 oneYear = 365 days;
-
+    function test_GrantBigDepositorRole() public {
         vm.startPrank(USER);
-        vault.deposit{value: 5 ether}(oneYear);
+        vault.deposit{value: 5 ether}(ONE_YEAR);
         vm.stopPrank();
 
         assertTrue(vault.hasRole(vault.BIG_DEPOSITOR(), USER));
+    }
+
+    function test_GrantTempRole() public {
+        vm.prank(USER);
+        vault.deposit{value: DEPOSIT_AMOUNT}(FIVE_YEARS);
+
+        assertTrue(vault.hasRole(vault.TEMP_BIG_FAN(), USER));
+    }
+
+    function test_GrantLongTermFailesAndFrrequentRoleWorks() public {
+        vm.startPrank(USER);
+        vault.deposit{value: 1 ether}(ONE_YEAR);
+        vault.deposit{value: 1 ether}(ONE_YEAR);
+        vault.deposit{value: 1 ether}(ONE_YEAR);
+        vm.stopPrank();
+
+        assertFalse(vault.hasRole(vault.LONG_TERM_WHALE(), USER));
+        assertTrue(vault.hasRole(vault.FREQUENT_WHALE(), USER));
+    }
+
+    function testFuzz_DepositDoesNotGrantLongTermWhaleIfBelowThreshold(uint256 amount) public {
+        amount = bound(amount, 0.0001 ether, 0.999 ether);
+        vm.prank(USER);
+        vault.deposit{value: 0.5 ether}(FIVE_YEARS);
+
+        assertFalse(vault.hasRole(vault.LONG_TERM_WHALE(), USER));
+    }
+
+    function test_GrantLongTermAndFrrequentRoles() public {
+        vm.startPrank(USER);
+        vault.deposit{value: 5 ether}(FIVE_YEARS);
+        vault.deposit{value: 5 ether}(FIVE_YEARS);
+        vault.deposit{value: 5 ether}(FIVE_YEARS);
+        vm.stopPrank();
+
+        assertTrue(vault.hasRole(vault.LONG_TERM_WHALE(), USER));
+        assertTrue(vault.hasRole(vault.FREQUENT_WHALE(), USER));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -605,6 +678,92 @@ contract VaultTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
+                            CHECK UPKEEP TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_CheckUpkeepReverts_NoUsers() public view {
+        (bool upkeepNeeded, bytes memory performData) = vault.checkUpkeep("");
+
+        assertFalse(upkeepNeeded);
+        (address[] memory expired, uint256 count) = abi.decode(performData, (address[], uint256));
+
+        assertEq(count, 0);
+        assertEq(expired.length, vault.getMaxUsers());
+    }
+
+    function test_CheckUpkeepNeeded() public {
+        vm.prank(USER);
+        vault.deposit{value: DEPOSIT_AMOUNT}(SIX_MONTHS);
+
+        vm.warp(block.timestamp + SIX_MONTHS + 1);
+
+        (bool upkeepNeeded, bytes memory performData) = vault.checkUpkeep("");
+
+        assert(upkeepNeeded);
+        (address[] memory expired, uint256 count) = abi.decode(performData, (address[], uint256));
+
+        assertEq(count, 1);
+        assertEq(expired[0], USER);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            PERFORM UPKEEP TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_PerformUpkeepRevertsIfNotNeeded() public {
+        (bool upkeepNeeded,) = vault.checkUpkeep("");
+        assertFalse(upkeepNeeded);
+
+        vm.expectRevert();
+        vault.performUpkeep("");
+    }
+
+    function test_PerformUpkeepNoExpiredUsersDoesNothing() public {
+        (bool upkeepNeeded, bytes memory performData) = vault.checkUpkeep("");
+        assertFalse(upkeepNeeded);
+
+        vault.performUpkeep(performData);
+
+        address someUser = makeAddr("anyUser");
+        assertFalse(vault.hasRole(vault.TEMP_BIG_FAN(), someUser));
+    }
+
+    function test_PerformUpkeepSuccess() public {
+        vm.prank(USER);
+        vault.deposit{value: DEPOSIT_AMOUNT}(SIX_MONTHS);
+        assertTrue(vault.hasRole(vault.TEMP_BIG_FAN(), USER));
+
+        vm.warp(block.timestamp + SIX_MONTHS + 1);
+        (bool upkeepNeeded, bytes memory performData) = vault.checkUpkeep("");
+        assert(upkeepNeeded);
+        vault.performUpkeep(performData);
+
+        assertFalse(vault.hasRole(vault.TEMP_BIG_FAN(), USER));
+    }
+
+    function test_PerformUpkeepMultipleTimes() public {
+        vm.prank(USER);
+        vault.deposit{value: DEPOSIT_AMOUNT}(SIX_MONTHS);
+
+        vm.warp(block.timestamp + SIX_MONTHS + 1);
+        (bool upkeepNeedeFirst, bytes memory performDataFirst) = vault.checkUpkeep("");
+        assert(upkeepNeedeFirst);
+        vault.performUpkeep(performDataFirst);
+        assertFalse(vault.hasRole(vault.TEMP_BIG_FAN(), USER));
+
+        vm.prank(USER);
+        vault.deposit{value: DEPOSIT_AMOUNT}(SIX_MONTHS);
+        assertTrue(vault.hasRole(vault.TEMP_BIG_FAN(), USER));
+
+        Vault.UserDeposit memory secondDeposit = vault.getDepositByIndex(USER, 1);
+        vm.warp(secondDeposit.lockUntil + SIX_MONTHS + 1);
+        (bool upkeepNeededSecond, bytes memory performDataSecond) = vault.checkUpkeep("");
+        assert(upkeepNeededSecond);
+        vault.performUpkeep(performDataSecond);
+        assertFalse(vault.hasRole(vault.TEMP_BIG_FAN(), USER));
+    }
+
+    /*//////////////////////////////////////////////////////////////
                             EDGE CASES TESTS
     //////////////////////////////////////////////////////////////*/
 
@@ -624,6 +783,59 @@ contract VaultTest is Test {
         assertEq(vault.getTotalValueLocked(), 101 ether);
         assertEq(vault.getUserDeposits(user101).length, 1);
     }
+
+    function test_PerformUpkeepRevertWithEmptyPerformData() public {
+        bytes memory emptyData = "";
+
+        vm.expectRevert();
+        vault.performUpkeep(emptyData);
+
+        address user = makeAddr("anyUser");
+        assertFalse(vault.hasRole(vault.TEMP_BIG_FAN(), user));
+    }
+
+    function test_PerformUpkeepWithPartiallyExpiredUsers() public {
+        address user1 = makeAddr("u1");
+        address user2 = makeAddr("u2");
+        vm.deal(user1, 10 ether);
+        vm.deal(user2, 10 ether);
+
+        vm.prank(user1);
+        vault.deposit{value: 1 ether}(SIX_MONTHS);
+        vm.prank(user2);
+        vault.deposit{value: 1 ether}(SIX_MONTHS);
+
+        vm.warp(block.timestamp + SIX_MONTHS + 1);
+        vm.prank(user2);
+        vault.deposit{value: 1 ether}(SIX_MONTHS);
+
+        (bool upkeepNeeded, bytes memory performData) = vault.checkUpkeep("");
+        assert(upkeepNeeded);
+
+        vault.performUpkeep(performData);
+        assertFalse(vault.hasRole(vault.TEMP_BIG_FAN(), user1));
+        assertTrue(vault.hasRole(vault.TEMP_BIG_FAN(), user2));
+    }
+
+    function test_PerformUpkeepMaxUsersEdgeCase() public {
+        uint256 maxUsers = vault.getMaxUsers();
+
+        // депозити для максимальної кількості користувачів
+        for (uint256 i = 0; i < maxUsers; i++) {
+            address u = makeAddr(string(abi.encodePacked("user", vm.toString(i))));
+            vm.deal(u, 10 ether);
+            vm.prank(u);
+            vault.deposit{value: 1 ether}(SIX_MONTHS);
+        }
+
+        vm.warp(block.timestamp + SIX_MONTHS + 1);
+
+        (bool upkeepNeeded, bytes memory performData) = vault.checkUpkeep("");
+        assert(upkeepNeeded);
+
+        vault.performUpkeep(performData); // тепер не буде out-of-bounds
+    }
+
     /*//////////////////////////////////////////////////////////////
                               GETTER TESTS
     //////////////////////////////////////////////////////////////*/
